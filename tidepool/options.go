@@ -17,6 +17,8 @@ type Config struct {
 	QueryURL   string
 	IngestURL  string
 	Timeout    time.Duration
+	DefaultNamespace string
+	// Namespace is deprecated. Use DefaultNamespace.
 	Namespace  string
 	HTTPClient *http.Client
 }
@@ -49,6 +51,14 @@ func WithTimeout(d time.Duration) Option {
 func WithNamespace(ns string) Option {
 	return func(c *Config) {
 		c.Namespace = ns
+		c.DefaultNamespace = ns
+	}
+}
+
+// WithDefaultNamespace sets the default namespace.
+func WithDefaultNamespace(ns string) Option {
+	return func(c *Config) {
+		c.DefaultNamespace = ns
 	}
 }
 

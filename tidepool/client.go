@@ -21,15 +21,18 @@ type Client struct {
 // New creates a new Tidepool client.
 func New(opts ...Option) *Client {
 	cfg := Config{
-		QueryURL:  defaultQueryURL,
-		IngestURL: defaultIngestURL,
-		Timeout:   defaultTimeout,
-		Namespace: defaultNamespace,
+		QueryURL:         defaultQueryURL,
+		IngestURL:        defaultIngestURL,
+		Timeout:          defaultTimeout,
+		DefaultNamespace: defaultNamespace,
 	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
 		}
+	}
+	if cfg.DefaultNamespace == "" && cfg.Namespace != "" {
+		cfg.DefaultNamespace = cfg.Namespace
 	}
 
 	httpClient := cfg.HTTPClient
@@ -107,7 +110,7 @@ func (c *Client) Upsert(ctx context.Context, docs []Document, opts *UpsertOption
 }
 
 // Query searches for similar vectors.
-func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) ([]VectorResult, error) {
+func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) (*QueryResponse, error) {
 	if err := ValidateVector(vector, 0); err != nil {
 		return nil, err
 	}
@@ -160,7 +163,7 @@ func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) (
 		return nil, err
 	}
 
-	results, err := decodeVectorResults(body)
+	results, err := decodeQueryResponse(body, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -226,8 +229,8 @@ func (c *Client) GetNamespace(ctx context.Context, namespace string) (*Namespace
 	return &info, nil
 }
 
-// ListNamespaces returns all namespace names.
-func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
+// ListNamespaces returns namespace info entries.
+func (c *Client) ListNamespaces(ctx context.Context) ([]NamespaceInfo, error) {
 	endpoint, err := joinURL(c.config.QueryURL, "v1", "namespaces")
 	if err != nil {
 		return nil, err
@@ -266,9 +269,43 @@ func (c *Client) Status(ctx context.Context) (*IngestStatus, error) {
 	return &status, nil
 }
 
-// Compact triggers manual compaction.
-func (c *Client) Compact(ctx context.Context) error {
-	endpoint, err := joinURL(c.config.IngestURL, "compact")
+// GetNamespaceStatus returns status information for a namespace.
+func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*NamespaceStatus, error) {
+	resolved, err := c.namespaceOrDefault(namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint, err := joinURL(c.config.IngestURL, "v1", "namespaces", resolved, "status")
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := c.doRequest(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var status NamespaceStatus
+	if err := json.Unmarshal(body, &status); err != nil {
+		return nil, fmt.Errorf("decode namespace status response: %w", err)
+	}
+
+	return &status, nil
+}
+
+// Compact triggers manual compaction for a namespace.
+func (c *Client) Compact(ctx context.Context, namespace ...string) error {
+	ns := ""
+	if len(namespace) > 0 {
+		ns = namespace[0]
+	}
+	resolved, err := c.namespaceOrDefault(ns)
+	if err != nil {
+		return err
+	}
+
+	endpoint, err := joinURL(c.config.IngestURL, "v1", "namespaces", resolved, "compact")
 	if err != nil {
 		return err
 	}
@@ -305,6 +342,9 @@ func (c *Client) serviceBaseURL(service string) (string, error) {
 func (c *Client) namespaceOrDefault(namespace string) (string, error) {
 	if namespace != "" {
 		return namespace, nil
+	}
+	if c.config.DefaultNamespace != "" {
+		return c.config.DefaultNamespace, nil
 	}
 	if c.config.Namespace != "" {
 		return c.config.Namespace, nil
@@ -390,47 +430,81 @@ func joinURL(base string, parts ...string) (string, error) {
 	return url.JoinPath(base, parts...)
 }
 
-func decodeVectorResults(data []byte) ([]VectorResult, error) {
+func decodeQueryResponse(data []byte, fallbackNamespace string) (*QueryResponse, error) {
 	var direct []VectorResult
 	if err := json.Unmarshal(data, &direct); err == nil {
-		return direct, nil
+		return &QueryResponse{
+			Results:   direct,
+			Namespace: fallbackNamespace,
+		}, nil
 	}
 
 	var wrapped struct {
-		Results []VectorResult `json:"results"`
-		Vectors []VectorResult `json:"vectors"`
+		Namespace string         `json:"namespace"`
+		Results   []VectorResult `json:"results"`
+		Vectors   []VectorResult `json:"vectors"`
 	}
 	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return nil, fmt.Errorf("decode query response: %w", err)
 	}
-	if wrapped.Results != nil {
-		return wrapped.Results, nil
+
+	results := wrapped.Results
+	if results == nil {
+		results = wrapped.Vectors
 	}
-	if wrapped.Vectors != nil {
-		return wrapped.Vectors, nil
+	if results == nil {
+		return nil, fmt.Errorf("decode query response: missing results")
 	}
 
-	return nil, fmt.Errorf("decode query response: missing results")
+	namespace := wrapped.Namespace
+	if namespace == "" {
+		namespace = fallbackNamespace
+	}
+
+	return &QueryResponse{
+		Results:   results,
+		Namespace: namespace,
+	}, nil
 }
 
-func decodeNamespaces(data []byte) ([]string, error) {
-	var direct []string
+func decodeNamespaces(data []byte) ([]NamespaceInfo, error) {
+	var wrapped struct {
+		Namespaces []NamespaceInfo `json:"namespaces"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.Namespaces != nil {
+		return wrapped.Namespaces, nil
+	}
+
+	var direct []NamespaceInfo
 	if err := json.Unmarshal(data, &direct); err == nil {
 		return direct, nil
 	}
 
-	var wrapped struct {
+	var legacyDirect []string
+	if err := json.Unmarshal(data, &legacyDirect); err == nil {
+		return namesToNamespaceInfo(legacyDirect), nil
+	}
+
+	var legacyWrapped struct {
 		Namespaces    []string `json:"namespaces"`
 		NamespaceList []string `json:"namespace_list"`
 	}
-	if err := json.Unmarshal(data, &wrapped); err != nil {
+	if err := json.Unmarshal(data, &legacyWrapped); err != nil {
 		return nil, fmt.Errorf("decode namespaces response: %w", err)
 	}
-	if wrapped.Namespaces != nil {
-		return wrapped.Namespaces, nil
+	if legacyWrapped.Namespaces != nil {
+		return namesToNamespaceInfo(legacyWrapped.Namespaces), nil
 	}
-	if wrapped.NamespaceList != nil {
-		return wrapped.NamespaceList, nil
+	if legacyWrapped.NamespaceList != nil {
+		return namesToNamespaceInfo(legacyWrapped.NamespaceList), nil
 	}
 	return nil, fmt.Errorf("decode namespaces response: missing namespaces")
+}
+
+func namesToNamespaceInfo(names []string) []NamespaceInfo {
+	infos := make([]NamespaceInfo, 0, len(names))
+	for _, name := range names {
+		infos = append(infos, NamespaceInfo{Namespace: name})
+	}
+	return infos
 }

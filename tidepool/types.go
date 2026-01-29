@@ -26,6 +26,12 @@ type VectorResult struct {
 	Attributes Attributes `json:"attributes,omitempty"`
 }
 
+// QueryResponse represents a query response with namespace context.
+type QueryResponse struct {
+	Results   []VectorResult `json:"results"`
+	Namespace string         `json:"namespace"`
+}
+
 // DistanceMetric controls how distances are computed.
 type DistanceMetric string
 
@@ -37,9 +43,20 @@ const (
 
 // NamespaceInfo describes a namespace.
 type NamespaceInfo struct {
-	Namespace   string `json:"namespace"`
-	ApproxCount int64  `json:"approx_count"`
-	Dimensions  int    `json:"dimensions"`
+	Namespace         string `json:"namespace"`
+	ApproxCount       int64  `json:"approx_count"`
+	Dimensions        int    `json:"dimensions"`
+	PendingCompaction *bool  `json:"pending_compaction,omitempty"`
+}
+
+// NamespaceStatus describes namespace compaction state.
+type NamespaceStatus struct {
+	LastRun    *time.Time `json:"last_run,omitempty"`
+	WALFiles   int        `json:"wal_files"`
+	WALEntries int        `json:"wal_entries"`
+	Segments   int        `json:"segments"`
+	TotalVecs  int        `json:"total_vecs"`
+	Dimensions int        `json:"dimensions"`
 }
 
 // IngestStatus describes ingest service state.

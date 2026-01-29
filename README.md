@@ -9,6 +9,7 @@ The client implementation is available and tracks the v1 Tidepool API contract.
 ## Documentation
 
 - `tidepool-go-client-design.md` — API contract and usage examples.
+- `docs/GO_CLIENT.md` — Dynamic namespace usage and API reference.
 
 ## Package Layout
 
@@ -63,14 +64,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	results, err := client.Query(ctx, []float32{0.1, 0.2, 0.3}, &tidepool.QueryOptions{
+	response, err := client.Query(ctx, []float32{0.1, 0.2, 0.3}, &tidepool.QueryOptions{
 		TopK: 5,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	for _, r := range results {
+	for _, r := range response.Results {
 		fmt.Printf("%s: %.4f\n", r.ID, r.Dist)
 	}
 }

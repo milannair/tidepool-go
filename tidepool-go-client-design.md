@@ -87,9 +87,10 @@ const (
 
 ```go
 type NamespaceInfo struct {
-    Namespace   string `json:"namespace"`
-    ApproxCount int64  `json:"approx_count"`
-    Dimensions  int    `json:"dimensions"`
+    Namespace         string `json:"namespace"`
+    ApproxCount       int64  `json:"approx_count"`
+    Dimensions        int    `json:"dimensions"`
+    PendingCompaction *bool  `json:"pending_compaction,omitempty"`
 }
 ```
 
@@ -348,8 +349,8 @@ fmt.Printf("Vectors: %d, Dimensions: %d\n", info.ApproxCount, info.Dimensions)
 ### List Namespaces
 
 ```go
-// ListNamespaces returns all namespace names
-func (c *Client) ListNamespaces(ctx context.Context) ([]string, error)
+// ListNamespaces returns namespace info entries
+func (c *Client) ListNamespaces(ctx context.Context) ([]NamespaceInfo, error)
 ```
 
 **HTTP:** `GET /v1/namespaces`
@@ -360,7 +361,7 @@ namespaces, err := client.ListNamespaces(ctx)
 if err != nil {
     log.Fatal(err)
 }
-fmt.Println(namespaces) // ["default", "embeddings"]
+fmt.Println(namespaces) // [{Namespace: "default", ...}, {Namespace: "embeddings", ...}]
 ```
 
 ---

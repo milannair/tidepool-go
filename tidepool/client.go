@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -109,12 +110,9 @@ func (c *Client) Upsert(ctx context.Context, docs []Document, opts *UpsertOption
 	return err
 }
 
-// Query searches for similar vectors.
+// Query searches by vector similarity, full-text, or hybrid retrieval.
+// For text-only queries, pass a nil or empty vector and set opts.Text (and optionally opts.Mode).
 func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) (*QueryResponse, error) {
-	if err := ValidateVector(vector, 0); err != nil {
-		return nil, err
-	}
-
 	desiredNamespace := ""
 	if opts != nil {
 		desiredNamespace = opts.Namespace
@@ -129,8 +127,87 @@ func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) (
 		return nil, err
 	}
 
+	var (
+		text   string
+		mode   QueryMode
+		fusion FusionMode
+		alpha  *float32
+		rrfK   *int
+	)
+
+	if opts != nil {
+		text = strings.TrimSpace(opts.Text)
+		mode = opts.Mode
+		fusion = opts.Fusion
+		alpha = opts.Alpha
+		rrfK = opts.RRFK
+
+		if opts.TopK < 0 {
+			return nil, fmt.Errorf("%w: top_k must be a positive integer", ErrValidation)
+		}
+		if opts.EfSearch < 0 {
+			return nil, fmt.Errorf("%w: ef_search must be a positive integer", ErrValidation)
+		}
+		if opts.NProbe < 0 {
+			return nil, fmt.Errorf("%w: nprobe must be a positive integer", ErrValidation)
+		}
+	}
+
+	hasVector := len(vector) > 0
+	if hasVector {
+		if err := ValidateVector(vector, 0); err != nil {
+			return nil, err
+		}
+	}
+
+	hasText := text != ""
+
+	if mode == "" {
+		switch {
+		case hasVector && hasText:
+			mode = QueryModeHybrid
+		case hasText:
+			mode = QueryModeText
+		default:
+			mode = QueryModeVector
+		}
+	} else if mode != QueryModeVector && mode != QueryModeText && mode != QueryModeHybrid {
+		return nil, fmt.Errorf("%w: mode must be one of vector, text, hybrid", ErrValidation)
+	}
+
+	if fusion != "" && fusion != FusionBlend && fusion != FusionRRF {
+		return nil, fmt.Errorf("%w: fusion must be one of blend, rrf", ErrValidation)
+	}
+
+	if mode == QueryModeVector && !hasVector {
+		return nil, fmt.Errorf("%w: vector is required", ErrValidation)
+	}
+	if mode == QueryModeText && !hasText {
+		return nil, fmt.Errorf("%w: text is required", ErrValidation)
+	}
+	if mode == QueryModeHybrid && (!hasVector || !hasText) {
+		return nil, fmt.Errorf("%w: vector and text are required for hybrid", ErrValidation)
+	}
+
+	if alpha != nil {
+		if math.IsNaN(float64(*alpha)) || math.IsInf(float64(*alpha), 0) {
+			return nil, fmt.Errorf("%w: alpha must be a finite number", ErrValidation)
+		}
+		clamped := float32(math.Min(1, math.Max(0, float64(*alpha))))
+		alpha = &clamped
+	}
+
+	if rrfK != nil && *rrfK <= 0 {
+		return nil, fmt.Errorf("%w: rrf_k must be a positive integer", ErrValidation)
+	}
+
 	req := struct {
-		Vector         Vector         `json:"vector"`
+		Vector         Vector         `json:"vector,omitempty"`
+		Text           string         `json:"text,omitempty"`
+		Mode           string         `json:"mode,omitempty"`
+		Alpha          *float32       `json:"alpha,omitempty"`
+		Fusion         string         `json:"fusion,omitempty"`
+		RRFK           *int           `json:"rrf_k,omitempty"`
 		TopK           int            `json:"top_k,omitempty"`
 		EfSearch       int            `json:"ef_search,omitempty"`
 		NProbe         int            `json:"nprobe,omitempty"`
@@ -139,6 +216,11 @@ func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) (
 		Filters        Attributes     `json:"filters,omitempty"`
 	}{
 		Vector: vector,
+		Text:   text,
+		Mode:   string(mode),
+		Alpha:  alpha,
+		Fusion: string(fusion),
+		RRFK:   rrfK,
 	}
 
 	if opts != nil {

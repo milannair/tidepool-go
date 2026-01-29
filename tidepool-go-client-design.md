@@ -55,6 +55,7 @@ type Attributes map[string]AttrValue
 type Document struct {
     ID         string     `json:"id"`
     Vector     Vector     `json:"vector,omitempty"`
+    Text       string     `json:"text,omitempty"`
     Attributes Attributes `json:"attributes,omitempty"`
 }
 ```
@@ -65,7 +66,7 @@ type Document struct {
 // VectorResult is a single query result
 type VectorResult struct {
     ID         string     `json:"id"`
-    Dist       float32    `json:"dist"`
+    Score      float32    `json:"score"`
     Vector     Vector     `json:"vector,omitempty"`
     Attributes Attributes `json:"attributes,omitempty"`
 }
@@ -80,6 +81,21 @@ const (
     DistanceCosine     DistanceMetric = "cosine_distance"
     DistanceEuclidean  DistanceMetric = "euclidean_squared"
     DistanceDotProduct DistanceMetric = "dot_product"
+)
+
+type QueryMode string
+
+const (
+    QueryModeVector QueryMode = "vector"
+    QueryModeText   QueryMode = "text"
+    QueryModeHybrid QueryMode = "hybrid"
+)
+
+type FusionMode string
+
+const (
+    FusionBlend FusionMode = "blend"
+    FusionRRF   FusionMode = "rrf"
 )
 ```
 
@@ -202,6 +218,7 @@ func (c *Client) Upsert(ctx context.Context, docs []Document, opts *UpsertOption
     {
       "id": "doc-123",
       "vector": [0.1, 0.2, 0.3],
+      "text": "machine learning guide",
       "attributes": { "title": "Example" }
     }
   ],
@@ -215,6 +232,7 @@ docs := []tidepool.Document{
     {
         ID:     "doc-1",
         Vector: []float32{0.1, 0.2, 0.3, 0.4},
+        Text:   "machine learning guide",
         Attributes: map[string]any{
             "title":    "First Document",
             "category": "news",
@@ -243,7 +261,7 @@ if err != nil {
 
 ---
 
-### Query Vectors
+### Query (Vector, Text, Hybrid)
 
 ```go
 // QueryOptions configures query behavior
@@ -255,18 +273,28 @@ type QueryOptions struct {
     Filters        Attributes
     EfSearch       int // HNSW beam width
     NProbe         int // IVF partitions to search
+    Text           string
+    Mode           QueryMode
+    Alpha          *float32
+    Fusion         FusionMode
+    RRFK           *int
 }
 
-// Query searches for similar vectors
-func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) ([]VectorResult, error)
+// Query searches by vector similarity, full-text, or hybrid retrieval.
+// For text-only queries, pass a nil/empty vector and set Text/Mode accordingly.
+func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) (*QueryResponse, error)
 ```
 
 **HTTP:** `POST /v1/vectors/{namespace}`
 
-**Request Body:**
+**Request Body (hybrid example):**
 ```json
 {
   "vector": [0.1, 0.2, 0.3],
+  "text": "neural networks",
+  "mode": "hybrid",
+  "alpha": 0.7,
+  "fusion": "blend",
   "top_k": 10,
   "ef_search": 100,
   "nprobe": 10,
@@ -278,18 +306,19 @@ func (c *Client) Query(ctx context.Context, vector Vector, opts *QueryOptions) (
 
 **Example:**
 ```go
-results, err := client.Query(ctx, []float32{0.1, 0.2, 0.3, 0.4}, &tidepool.QueryOptions{
+alpha := float32(0.7)
+response, err := client.Query(ctx, []float32{0.1, 0.2, 0.3, 0.4}, &tidepool.QueryOptions{
     TopK: 5,
-    Filters: map[string]any{
-        "category": "news",
-    },
+    Text: "machine learning",
+    Mode: tidepool.QueryModeHybrid,
+    Alpha: &alpha,
 })
 if err != nil {
     log.Fatal(err)
 }
 
-for _, r := range results {
-    fmt.Printf("%s: %.4f\n", r.ID, r.Dist)
+for _, r := range response.Results {
+    fmt.Printf("%s: %.4f\n", r.ID, r.Score)
 }
 ```
 
@@ -451,7 +480,7 @@ func IsServiceUnavailable(err error) bool
 
 **Example:**
 ```go
-results, err := client.Query(ctx, vector, nil)
+response, err := client.Query(ctx, vector, nil)
 if err != nil {
     if tidepool.IsNotFoundError(err) {
         log.Println("Namespace not found")
@@ -463,6 +492,7 @@ if err != nil {
     }
     log.Fatalf("Query failed: %v", err)
 }
+_ = response
 ```
 
 ---
@@ -510,15 +540,15 @@ func main() {
     }
 
     // Query
-    results, err := client.Query(ctx, []float32{0.1, 0.2, 0.3, 0.4}, &tidepool.QueryOptions{
+    response, err := client.Query(ctx, []float32{0.1, 0.2, 0.3, 0.4}, &tidepool.QueryOptions{
         TopK: 5,
     })
     if err != nil {
         log.Fatal(err)
     }
 
-    for _, r := range results {
-        fmt.Printf("%s: %.4f\n", r.ID, r.Dist)
+    for _, r := range response.Results {
+        fmt.Printf("%s: %.4f\n", r.ID, r.Score)
     }
 }
 ```
@@ -603,7 +633,7 @@ func withRetry[T any](ctx context.Context, maxRetries int, fn func() (T, error))
 }
 
 // Usage
-results, err := withRetry(ctx, 3, func() ([]tidepool.VectorResult, error) {
+response, err := withRetry(ctx, 3, func() (*tidepool.QueryResponse, error) {
     return client.Query(ctx, vector, nil)
 })
 ```

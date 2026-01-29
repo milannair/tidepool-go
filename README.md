@@ -54,6 +54,7 @@ func main() {
 		{
 			ID:     "doc-1",
 			Vector: []float32{0.1, 0.2, 0.3},
+			Text:   "machine learning guide",
 			Attributes: map[string]any{
 				"title": "Example",
 			},
@@ -64,15 +65,19 @@ func main() {
 		log.Fatal(err)
 	}
 
+	alpha := float32(0.7)
 	response, err := client.Query(ctx, []float32{0.1, 0.2, 0.3}, &tidepool.QueryOptions{
 		TopK: 5,
+		Text: "neural networks",
+		Mode: tidepool.QueryModeHybrid,
+		Alpha: &alpha,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	for _, r := range response.Results {
-		fmt.Printf("%s: %.4f\n", r.ID, r.Dist)
+		fmt.Printf("%s: %.4f\n", r.ID, r.Score)
 	}
 }
 ```

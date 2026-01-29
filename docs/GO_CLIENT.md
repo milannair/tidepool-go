@@ -20,7 +20,16 @@ client := tidepool.New(
 
 ```go
 client.Upsert(ctx, docs, &tidepool.UpsertOptions{Namespace: "products"})
-client.Query(ctx, vector, &tidepool.QueryOptions{Namespace: "products"})
+client.Query(ctx, vector, &tidepool.QueryOptions{
+    Namespace: "products",
+    Text:      "neural networks",
+    Mode:      tidepool.QueryModeHybrid,
+    Alpha:     &alpha,
+    Fusion:    tidepool.FusionBlend,
+    RRFK:      &rrfK,
+})
+// Text-only query (pass nil/empty vector)
+client.Query(ctx, nil, &tidepool.QueryOptions{Text: "keyword search", Mode: tidepool.QueryModeText})
 client.Delete(ctx, ids, &tidepool.DeleteOptions{Namespace: "products"})
 
 client.GetNamespace(ctx, "products")
@@ -32,6 +41,10 @@ client.Compact(ctx, "products")
 client.Status(ctx) // Ingest service status (global)
 client.Health(ctx, "query" | "ingest")
 ```
+
+## Full-Text & Hybrid Search
+
+Include `Text` on documents to enable BM25 search. For queries, set `Mode` to `QueryModeText` for full-text only or `QueryModeHybrid` to fuse vector and text results. Hybrid queries support `Alpha` (blend weight) and `Fusion`/`RRFK` for reciprocal-rank fusion.
 
 Pass an empty string to use the configured default namespace.
 
@@ -88,7 +101,14 @@ func indexTenantData(ctx context.Context, tenantID string, documents []map[strin
 
 func searchTenant(ctx context.Context, tenantID string, query string, topK int) (*tidepool.QueryResponse, error) {
 	queryVec := embed(query)
-	return client.Query(ctx, queryVec, &tidepool.QueryOptions{TopK: topK, Namespace: "tenant_" + tenantID})
+	alpha := float32(0.7)
+	return client.Query(ctx, queryVec, &tidepool.QueryOptions{
+		TopK:      topK,
+		Namespace: "tenant_" + tenantID,
+		Text:      query,
+		Mode:      tidepool.QueryModeHybrid,
+		Alpha:     &alpha,
+	})
 }
 ```
 

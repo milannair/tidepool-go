@@ -90,7 +90,7 @@ func newQueryServer(recorder *requestRecorder) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(QueryResponse{
 				Namespace: namespace,
 				Results: []VectorResult{
-					{ID: "a", Dist: 0.1},
+					{ID: "a", Score: 0.1},
 				},
 			})
 			return
@@ -257,5 +257,35 @@ func TestListNamespacesReturnsInfo(t *testing.T) {
 	}
 	if infos[0].PendingCompaction == nil || *infos[0].PendingCompaction != true {
 		t.Fatalf("expected pending_compaction true, got %+v", infos[0].PendingCompaction)
+	}
+}
+
+func TestTextOnlyQuery(t *testing.T) {
+	ctx := context.Background()
+	ingestRecorder := &requestRecorder{}
+	queryRecorder := &requestRecorder{}
+	ingestServer := newIngestServer(ingestRecorder)
+	queryServer := newQueryServer(queryRecorder)
+	defer ingestServer.Close()
+	defer queryServer.Close()
+
+	client := New(
+		WithIngestURL(ingestServer.URL),
+		WithQueryURL(queryServer.URL),
+		WithDefaultNamespace("default"),
+	)
+
+	response, err := client.Query(ctx, nil, &QueryOptions{
+		Text: "machine learning",
+		Mode: QueryModeText,
+	})
+	if err != nil {
+		t.Fatalf("text query failed: %v", err)
+	}
+	if response.Namespace != "default" {
+		t.Fatalf("expected default namespace, got %q", response.Namespace)
+	}
+	if !queryRecorder.contains("/v1/vectors/default") {
+		t.Fatalf("expected text query against default namespace")
 	}
 }

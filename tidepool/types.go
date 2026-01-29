@@ -1,6 +1,9 @@
 package tidepool
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Vector is a slice of 32-bit floating point numbers.
 type Vector []float32
@@ -15,15 +18,46 @@ type Attributes map[string]AttrValue
 type Document struct {
 	ID         string     `json:"id"`
 	Vector     Vector     `json:"vector,omitempty"`
+	Text       string     `json:"text,omitempty"`
 	Attributes Attributes `json:"attributes,omitempty"`
 }
 
 // VectorResult is a single query result.
 type VectorResult struct {
 	ID         string     `json:"id"`
-	Dist       float32    `json:"dist"`
+	Score      float32    `json:"score"`
 	Vector     Vector     `json:"vector,omitempty"`
 	Attributes Attributes `json:"attributes,omitempty"`
+}
+
+// UnmarshalJSON supports both "score" (current) and legacy "dist"/"distance" fields.
+func (r *VectorResult) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		ID         string     `json:"id"`
+		Vector     Vector     `json:"vector,omitempty"`
+		Attributes Attributes `json:"attributes,omitempty"`
+		Score      *float32   `json:"score"`
+		Dist       *float32   `json:"dist"`
+		Distance   *float32   `json:"distance"`
+	}
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	r.ID = decoded.ID
+	r.Vector = decoded.Vector
+	r.Attributes = decoded.Attributes
+	switch {
+	case decoded.Score != nil:
+		r.Score = *decoded.Score
+	case decoded.Dist != nil:
+		r.Score = *decoded.Dist
+	case decoded.Distance != nil:
+		r.Score = *decoded.Distance
+	default:
+		r.Score = 0
+	}
+	return nil
 }
 
 // QueryResponse represents a query response with namespace context.
@@ -39,6 +73,23 @@ const (
 	DistanceCosine     DistanceMetric = "cosine_distance"
 	DistanceEuclidean  DistanceMetric = "euclidean_squared"
 	DistanceDotProduct DistanceMetric = "dot_product"
+)
+
+// QueryMode controls how the query is executed.
+type QueryMode string
+
+const (
+	QueryModeVector QueryMode = "vector"
+	QueryModeText   QueryMode = "text"
+	QueryModeHybrid QueryMode = "hybrid"
+)
+
+// FusionMode controls hybrid score fusion.
+type FusionMode string
+
+const (
+	FusionBlend FusionMode = "blend"
+	FusionRRF   FusionMode = "rrf"
 )
 
 // NamespaceInfo describes a namespace.
@@ -90,6 +141,11 @@ type QueryOptions struct {
 	Filters        Attributes
 	EfSearch       int
 	NProbe         int
+	Text           string
+	Mode           QueryMode
+	Alpha          *float32
+	Fusion         FusionMode
+	RRFK           *int
 }
 
 // DeleteOptions configures delete behavior.

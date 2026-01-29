@@ -201,7 +201,11 @@ func (c *Client) Delete(ctx context.Context, ids []string, opts *DeleteOptions) 
 // GetNamespace returns namespace information.
 func (c *Client) GetNamespace(ctx context.Context, namespace string) (*NamespaceInfo, error) {
 	if namespace == "" {
-		return nil, fmt.Errorf("%w: namespace is required", ErrValidation)
+		var err error
+		namespace, err = c.namespaceOrDefault(namespace)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	endpoint, err := joinURL(c.config.QueryURL, "v1", "namespaces", namespace)
@@ -416,13 +420,17 @@ func decodeNamespaces(data []byte) ([]string, error) {
 	}
 
 	var wrapped struct {
-		Namespaces []string `json:"namespaces"`
+		Namespaces    []string `json:"namespaces"`
+		NamespaceList []string `json:"namespace_list"`
 	}
 	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return nil, fmt.Errorf("decode namespaces response: %w", err)
 	}
-	if wrapped.Namespaces == nil {
-		return nil, fmt.Errorf("decode namespaces response: missing namespaces")
+	if wrapped.Namespaces != nil {
+		return wrapped.Namespaces, nil
 	}
-	return wrapped.Namespaces, nil
+	if wrapped.NamespaceList != nil {
+		return wrapped.NamespaceList, nil
+	}
+	return nil, fmt.Errorf("decode namespaces response: missing namespaces")
 }

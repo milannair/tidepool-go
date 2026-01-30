@@ -2,24 +2,16 @@
 
 Go client library for the Tidepool Query and Ingest services.
 
-## Status
+## Highlights
 
-The client implementation is available and tracks the v1 Tidepool API contract.
+- Typed request/response models
+- Vector, text, and hybrid queries
+- Namespace management and status endpoints
+- Small surface area with explicit validation
 
-## Documentation
+## Requirements
 
-- `tidepool-go-client-design.md` — API contract and usage examples.
-- `docs/GO_CLIENT.md` — Dynamic namespace usage and API reference.
-
-## Package Layout
-
-```
-tidepool/
-├── client.go       // Main client implementation
-├── types.go        // Data types and enums
-├── errors.go       // Error types
-└── options.go      // Functional options
-```
+- Go 1.24+
 
 ## Installation
 
@@ -48,6 +40,7 @@ func main() {
 		tidepool.WithQueryURL("http://localhost:8080"),
 		tidepool.WithIngestURL("http://localhost:8081"),
 		tidepool.WithTimeout(30*time.Second),
+		tidepool.WithDefaultNamespace("default"),
 	)
 
 	docs := []tidepool.Document{
@@ -56,7 +49,7 @@ func main() {
 			Vector: []float32{0.1, 0.2, 0.3},
 			Text:   "machine learning guide",
 			Attributes: map[string]any{
-				"title": "Example",
+				"category": "news",
 			},
 		},
 	}
@@ -66,7 +59,7 @@ func main() {
 	}
 
 	alpha := float32(0.7)
-	response, err := client.Query(ctx, []float32{0.1, 0.2, 0.3}, &tidepool.QueryOptions{
+	resp, err := client.Query(ctx, []float32{0.1, 0.2, 0.3}, &tidepool.QueryOptions{
 		TopK: 5,
 		Text: "neural networks",
 		Mode: tidepool.QueryModeHybrid,
@@ -76,11 +69,74 @@ func main() {
 		log.Fatal(err)
 	}
 
-	for _, r := range response.Results {
+	for _, r := range resp.Results {
 		fmt.Printf("%s: %.4f\n", r.ID, r.Score)
 	}
 }
 ```
+
+## Configuration
+
+- `WithQueryURL` and `WithIngestURL` set base URLs. Defaults are:
+  - Query: `http://localhost:8080`
+  - Ingest: `http://localhost:8081`
+- `WithDefaultNamespace` sets the namespace used when a request does not provide one. Default is `default`.
+- `WithNamespace` is supported for backward compatibility but `WithDefaultNamespace` is preferred.
+- `WithTimeout` sets the HTTP timeout on the underlying client.
+- `WithHTTPClient` lets you supply a custom `*http.Client` (custom transport, proxy, TLS config, etc.).
+
+## Namespaces
+
+Each write/query/delete can target a specific namespace. If omitted, the client falls back to the configured default namespace.
+
+```go
+err := client.Upsert(ctx, docs, &tidepool.UpsertOptions{Namespace: "tenant-a"})
+```
+
+## Query Modes
+
+- Vector-only search: provide a vector, omit `Text`.
+- Text-only search: set `Text`, omit `Vector`, use `Mode: text`.
+- Hybrid search: provide both and set `Mode: hybrid`.
+
+```go
+resp, err := client.Query(ctx, nil, &tidepool.QueryOptions{
+	Text: "fraud detection",
+	Mode: tidepool.QueryModeText,
+	TopK: 10,
+})
+```
+
+## Error Handling
+
+Errors are mapped to sentinel errors for reliable checks:
+
+- `ErrValidation`
+- `ErrNotFound`
+- `ErrServiceUnavailable`
+
+```go
+if err != nil {
+	if tidepool.IsValidationError(err) {
+		// invalid input
+	}
+}
+```
+
+## Retries
+
+Retries are not built in. If you need retries, wrap calls with your own backoff logic or use a custom `http.Client` transport.
+
+## Testing
+
+```bash
+go test ./...
+```
+
+## Documentation
+
+- `tidepool-go-client-design.md` — API contract and usage examples
+- `docs/GO_CLIENT.md` — namespace usage and API reference
 
 ## Contributing
 

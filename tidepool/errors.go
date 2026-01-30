@@ -30,7 +30,7 @@ func IsNotFoundError(err error) bool {
 	return errors.Is(err, ErrNotFound)
 }
 
-// IsServiceUnavailable checks if err is a service unavailable error.
-func IsServiceUnavailable(err error) bool {
+// IsServiceUnavailableError checks if err is a service unavailable error.
+func IsServiceUnavailableError(err error) bool {
 	return errors.Is(err, ErrServiceUnavailable)
 }
